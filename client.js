@@ -76,7 +76,19 @@ window.__ModuleLoader__.load({
 
       const q = filter.trim().toLowerCase();
       const matches = (i, g) => !q || `${i.label} ${i.description} ${g.label}`.toLowerCase().includes(q);
-      const set = (ids, tier) => { setStates((s) => ({ ...s, ...Object.fromEntries(ids.map((id) => [id, tier])) })); setDirty(true); };
+      const byId = Object.fromEntries(inv.groups.flatMap((g) => g.items).map((i) => [i.id, i]));
+      // Turning a core DSH tool or skill off asks first; hiding it behind discover or an approval does not.
+      const set = (ids, tier) => {
+        if (tier === 'denied') {
+          const core = ids.map((id) => byId[id]).filter((i) => i?.core && states[i.id] !== 'denied');
+          if (core.length) {
+            const names = core.length > 4 ? `${core.slice(0, 4).map((i) => i.label).join(', ')} and ${core.length - 4} more` : core.map((i) => i.label).join(', ');
+            const notes = [...new Set(core.map((i) => i.note).filter(Boolean))].join(' ');
+            if (!window.confirm(`Warning: ${names} ${core.length === 1 ? 'is a core DSH' : 'are core DSH'} ${core.every((i) => i.id.startsWith('skill:')) ? 'skill' : 'tool'}${core.length === 1 ? '' : 's'}. ${notes} Agents on "${preset}" may stop working properly without ${core.length === 1 ? 'it' : 'them'}. Turn off anyway?`)) return;
+          }
+        }
+        setStates((s) => ({ ...s, ...Object.fromEntries(ids.map((id) => [id, tier])) })); setDirty(true);
+      };
       const all = inv.groups.flatMap((g) => g.items);
       const count = (tier) => all.filter((i) => states[i.id] === tier).length;
       const inPrompt = all.filter((i) => states[i.id] === 'primary').reduce((n, i) => n + (i.tokens || 0), 0);
@@ -116,7 +128,7 @@ window.__ModuleLoader__.load({
               tiers.size === 1 ? h(Tiers, { value: [...tiers][0], onChange: (t) => set(ids, t), small: true })
                 : h('span', { style: { display: 'inline-flex', gap: 6, alignItems: 'center' } }, h('span', { style: hint }, 'mixed · set all:'), h(Tiers, { value: null, onChange: (t) => set(ids, t), small: true }))),
             isOpen ? h('div', { style: { display: 'grid', gap: 4 } }, shown.map((i) => h('div', { key: i.id, style: { display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', padding: '4px 0', borderTop: line } },
-              h('span', { style: { minWidth: 0, flex: '1 1 260px' } }, h('span', { style: { fontSize: 13, fontWeight: 600 } }, i.label), i.tokens ? h('span', { style: hint }, `  ~${i.tokens} tokens`) : null, i.description ? h('span', { style: { ...hint, display: 'block' } }, i.description) : null),
+              h('span', { style: { minWidth: 0, flex: '1 1 260px' } }, h('span', { style: { fontSize: 13, fontWeight: 600 } }, i.label), i.core ? h('span', { style: { ...hint, border: line, borderRadius: 4, padding: '0 4px', marginLeft: 6 }, title: 'Ships with DSH; you are asked before turning it off' }, 'core') : null, i.tokens ? h('span', { style: hint }, `  ~${i.tokens} tokens`) : null, i.description ? h('span', { style: { ...hint, display: 'block' } }, i.description) : null),
               h(Tiers, { value: states[i.id], onChange: (t) => set([i.id], t), small: true })))) : null);
         }) : h('p', { style: hint }, 'Nothing is registered yet: no tools or skills were found in this profile.'),
 

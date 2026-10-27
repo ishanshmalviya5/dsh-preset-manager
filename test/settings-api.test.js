@@ -212,7 +212,7 @@ test('get exposes live agent metrics; audit lists recent decisions without argum
   assert.ok(!JSON.stringify(audit).includes('hunter2'));
 });
 
-test('an unexpected failure shows "internal error" to the page but logs the real cause for the host', async () => {
+test('an unexpected failure shows the message (never the stack) to the page and logs the stack for the host', async () => {
   const logged = [];
   const server = http.createServer(createHandler({ boom: () => { throw new Error('secret detail'); } }, { requestRejection: () => undefined }, { error: (m) => logged.push(m) }));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -220,7 +220,8 @@ test('an unexpected failure shows "internal error" to the page but logs the real
     const res = await fetch(`http://127.0.0.1:${server.address().port}${API}/boom`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     const body = await res.json();
     assert.equal(res.status, 500);
-    assert.deepEqual(body, { ok: false, error: 'internal error' });
+    assert.deepEqual(body, { ok: false, error: 'internal error: secret detail' });
+    assert.ok(!JSON.stringify(body).includes('at '), 'no stack in the response');
     assert.match(logged.join('\n'), /boom failed: Error: secret detail/);
   } finally { server.closeAllConnections(); server.close(); }
 });

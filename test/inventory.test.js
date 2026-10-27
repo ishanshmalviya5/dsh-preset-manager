@@ -174,3 +174,18 @@ test('collectInventory survives a loader or metadata lookup that throws, and sti
   const dead = { logger: { warn() {} }, get: (n) => (n === 'loader' ? { entries: () => { throw new Error('loader gone'); } } : n === 'tools' ? { schemas: () => [] } : undefined) };
   assert.deepEqual((await collectInventory(dead)).plugins, []);
 });
+
+test('core DSH tools and bundled skills are flagged; MCP, third-party and user skills are not', () => {
+  const inv = buildInventory({
+    tools: [{ name: 'skill' }, { name: 'bash' }, { name: 'mystery' }, { name: 'mcp__github__search' }],
+    skills: [{ name: 'office', provider: 'bundled-skills', source: 'bundled' }, { name: 'mine', provider: 'user', source: 'user-dsh' }],
+  });
+  const item = (id) => inv.groups.flatMap((g) => g.items).find((i) => i.id === id);
+  assert.equal(item('tool:skill').core, true);
+  assert.match(item('tool:skill').note, /discovery skill/);
+  assert.equal(item('tool:bash').core, true);
+  assert.equal(item('tool:mystery').core, false, 'a tool no known plugin owns is switchable but not core');
+  assert.equal(item('mcp-tool:github/search').core, false);
+  assert.equal(item('skill:office').core, true);
+  assert.equal(item('skill:mine').core, false);
+});

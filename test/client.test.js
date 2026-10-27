@@ -239,3 +239,32 @@ test('a rejected save shows the reason and says the old policy is still in force
   await settle();
   assert.match(textOf(inst.tree), /Not saved: presets\.standard: bad\. The previous policy is still in force/);
 });
+
+test('turning off a core tool asks first; declining changes nothing, and non-core items are not asked', async () => {
+  const inv = structuredClone(INV);
+  inv.groups[0].items[0] = { ...inv.groups[0].items[0], core: true, note: 'Needed for reading.' }; // read
+  inv.groups[1].items[0] = { ...inv.groups[1].items[0], core: false };
+  const asked = [];
+  const { inst, calls } = await boot({ get: () => DATA, inventory: () => inv, savematrix: () => ({ ok: true }) });
+  globalThis.window.confirm = (m) => { asked.push(m); return false; };
+  find(inst.tree, (n) => n.type === 'button' && textOf(n.kids).startsWith('▸ dsh-tool-fs'))[0].props.onClick();
+  await settle();
+  const offs = () => find(inst.tree, (n) => n.type === 'button' && textOf(n.kids) === 'Off');
+  offs()[0].props.onClick(); // the "read" row: primary -> off
+  await settle();
+  assert.equal(asked.length, 1);
+  assert.match(asked[0], /read is a core DSH tool\. Needed for reading\./);
+  assert.equal(find(inst.tree, (n) => n.type === 'button' && textOf(n.kids) === 'Save & apply')[0].props.disabled, true, 'declined: the table has nothing to save (the first Save is the table\'s)');
+  globalThis.window.confirm = () => true;
+  offs()[0].props.onClick();
+  await settle();
+  find(inst.tree, (n) => n.type === 'button' && textOf(n.kids) === 'Save & apply').find((b) => !b.props.disabled).props.onClick();
+  await settle();
+  assert.equal(calls.find((c) => c.action === 'savematrix').body.states['tool:read'], 'denied');
+  // hiding a core tool behind discover does not need a warning
+  asked.length = 0;
+  globalThis.window.confirm = (m) => { asked.push(m); return true; };
+  find(inst.tree, (n) => n.type === 'button' && textOf(n.kids) === 'On request')[0].props.onClick();
+  await settle();
+  assert.equal(asked.length, 0);
+});
