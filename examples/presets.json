@@ -1,0 +1,192 @@
+{
+  "version": 1,
+  "defaults": {
+    "unknown_capability": "deny",
+    "inheritance": "restrictive",
+    "dynamic_registration": "deny"
+  },
+  "admin": {
+    "host_critical": [
+      "tool:working_directory"
+    ]
+  },
+  "aliases": {
+    "read_only": [
+      "read",
+      "glob",
+      "grep",
+      "working_directory",
+      "todo_write"
+    ],
+    "jobs": [
+      "job_list",
+      "job_output",
+      "job_kill"
+    ]
+  },
+  "presets": {
+    "planner": {
+      "description": "Planning and delegation only; no file writes, no shell",
+      "tools": {
+        "primary": [
+          "@read_only",
+          "subagent",
+          "subagent_fork",
+          "list_agents",
+          "send_message",
+          "interrupt_agent",
+          "skill"
+        ],
+        "secondary": [
+          "web_search",
+          "web_fetch"
+        ]
+      },
+      "skills": {
+        "mode": "allowlist",
+        "allow": [
+          "*"
+        ]
+      },
+      "subagents": {
+        "mode": "allowlist",
+        "allow": [
+          "coder",
+          "researcher"
+        ]
+      }
+    },
+    "coder": {
+      "description": "Software development with read-only GitHub access",
+      "tools": {
+        "primary": [
+          "@read_only",
+          "write",
+          "edit",
+          "bash",
+          "skill",
+          "subagent",
+          "job_list",
+          "job_output"
+        ],
+        "secondary": [
+          "web_search",
+          "web_fetch",
+          "read_image",
+          "workflow"
+        ],
+        "tertiary": [
+          "job_kill"
+        ]
+      },
+      "mcp": {
+        "servers": {
+          "mode": "allowlist",
+          "allow": [
+            "github"
+          ]
+        },
+        "tools": {
+          "mode": "allowlist",
+          "allow": [
+            "github/search_*",
+            "github/get_*"
+          ]
+        }
+      },
+      "skills": {
+        "mode": "allowlist",
+        "allow": [
+          "*"
+        ]
+      },
+      "subagents": {
+        "mode": "allowlist",
+        "allow": [
+          "reviewer"
+        ]
+      }
+    },
+    "researcher": {
+      "description": "Reads code and the web; cannot change anything",
+      "tools": {
+        "primary": [
+          "@read_only",
+          "web_fetch",
+          "web_search",
+          "skill"
+        ],
+        "secondary": [
+          "read_image"
+        ]
+      },
+      "mcp": {
+        "servers": {
+          "mode": "allowlist",
+          "allow": []
+        },
+        "tools": {
+          "mode": "allowlist",
+          "allow": []
+        }
+      },
+      "subagents": {
+        "mode": "allowlist",
+        "allow": []
+      }
+    },
+    "reviewer": {
+      "description": "Reviews code; read and search only",
+      "tools": {
+        "primary": [
+          "@read_only"
+        ],
+        "secondary": [
+          "read_image"
+        ],
+        "tertiary": [
+          "bash"
+        ]
+      },
+      "skills": {
+        "mode": "allowlist",
+        "allow": []
+      },
+      "subagents": {
+        "mode": "allowlist",
+        "allow": []
+      }
+    },
+    "automation": {
+      "description": "Unattended jobs: shell and files, no web, no skills, no delegation",
+      "tools": {
+        "primary": [
+          "@read_only",
+          "@jobs",
+          "bash",
+          "write",
+          "edit"
+        ],
+        "secondary": [
+          "workflow"
+        ]
+      },
+      "skills": {
+        "mode": "allowlist",
+        "allow": []
+      },
+      "subagents": {
+        "mode": "allowlist",
+        "allow": []
+      }
+    }
+  },
+  "agents": {
+    "standard": {
+      "preset": "coder"
+    },
+    "minimal": {
+      "preset": "reviewer"
+    }
+  }
+}

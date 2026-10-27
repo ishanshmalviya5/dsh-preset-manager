@@ -1,0 +1,48 @@
+{
+  "name": "dsh-preset-manager",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Per-agent capability policy for dsh presets, with a Settings page: allow or deny tools, MCP servers, skills and delegation targets to save input tokens.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "test:spike": "node --test test/spike/",
+    "bench": "node bench/context.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*"
+  },
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "bin",
+    "client.js",
+    "locale/*.json",
+    "icon.svg",
+    "examples",
+    "bench/catalog.json",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "bin": {
+    "dpm": "bin/dpm.js"
+  }
+}

@@ -1,0 +1,1 @@
+{ "meta": { "title": "Preset Manager", "description": "Control which tools, MCP servers, skills and delegation targets each dsh agent preset can use. Smaller tool lists save input tokens, and denied capabilities cannot run." } }
