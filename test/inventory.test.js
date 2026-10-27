@@ -151,3 +151,26 @@ test('collectInventory tolerates missing services and a failing source', async (
   assert.deepEqual(ids(inv), ['tool:read']);
   assert.deepEqual(inv.presets, []);
 });
+
+test('a broken or still-loading preset (no rows, odd entries) does not break the inventory', () => {
+  const inv = buildInventory({
+    presets: [{ id: 'a', broken: 'failed to load' }, { id: 'b' }],
+    compositions: [{ id: 'a', broken: 'failed to load' }, null, { id: 'b', rows: [null, { moduleName: 'dsh-tool-fs' }] }],
+    plugins: [{ moduleName: 'dsh-tool-fs' }], tools: [{ name: 'read' }], skills: [{ name: 'x' }],
+  });
+  assert.deepEqual(inv.presets.map((p) => [p.id, p.plugins, p.broken]), [['a', [], 'failed to load'], ['b', ['dsh-tool-fs'], null]]);
+});
+
+test('collectInventory survives a loader or metadata lookup that throws, and still returns tools', async () => {
+  const entry = (name, base) => ({ options: { name }, disabled: false, parent: { tree: { ctx: { baseUrl: base } } } });
+  const ctx = { logger: { warn() {} }, get: (n) => ({
+    tools: { schemas: () => [{ name: 'read', description: 'r' }] },
+    loader: { entries: () => [entry('dsh-tool-fs', '/x'), { options: { group: true } }, { options: {} }] },
+    pluginPackages: { metaOf: () => { throw new Error('no meta'); } },
+  })[n] };
+  const inv = await collectInventory(ctx);
+  assert.deepEqual(ids(inv), ['tool:read']);
+  assert.deepEqual(inv.plugins.map((p) => p.id), ['dsh-tool-fs']);
+  const dead = { logger: { warn() {} }, get: (n) => (n === 'loader' ? { entries: () => { throw new Error('loader gone'); } } : n === 'tools' ? { schemas: () => [] } : undefined) };
+  assert.deepEqual((await collectInventory(dead)).plugins, []);
+});

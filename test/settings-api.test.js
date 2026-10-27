@@ -211,3 +211,16 @@ test('get exposes live agent metrics; audit lists recent decisions without argum
   assert.ok(audit.some((e) => e.type === 'invocation-denied' && e.capability === 'tool:bash'));
   assert.ok(!JSON.stringify(audit).includes('hunter2'));
 });
+
+test('an unexpected failure shows "internal error" to the page but logs the real cause for the host', async () => {
+  const logged = [];
+  const server = http.createServer(createHandler({ boom: () => { throw new Error('secret detail'); } }, { requestRejection: () => undefined }, { error: (m) => logged.push(m) }));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}${API}/boom`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    const body = await res.json();
+    assert.equal(res.status, 500);
+    assert.deepEqual(body, { ok: false, error: 'internal error' });
+    assert.match(logged.join('\n'), /boom failed: Error: secret detail/);
+  } finally { server.closeAllConnections(); server.close(); }
+});
