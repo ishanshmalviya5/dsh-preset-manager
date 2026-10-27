@@ -1,5 +1,6 @@
-// Settings page for dsh-preset-manager. The manifest editor is the single source of truth: the bindings table,
-// dry run and explain all read or edit that text, and nothing reaches the host until "Save & apply".
+// Settings page for dsh-preset-manager. The capability table (every installed tool, MCP tool and skill with a tier
+// control) is the main view; the manifest JSON, bindings, dry run and decisions sit under "Advanced". Nothing reaches
+// the host until a "Save & apply".
 window.__ModuleLoader__.load({
   id: 'dsh-preset-manager',
   factory(require) {
@@ -38,6 +39,96 @@ window.__ModuleLoader__.load({
       return h('table', { style: { borderCollapse: 'collapse', width: '100%' } },
         h('thead', null, h('tr', null, head.map((c) => h('th', { key: c, style: { ...cell, fontWeight: 600 } }, c)))),
         h('tbody', null, rows.map((r, i) => h('tr', { key: i }, r.map((c, j) => h('td', { key: j, style: cell }, c))))));
+    }
+
+
+    const TIER_LABEL = { denied: 'Off', primary: 'Always on', secondary: 'On request', tertiary: 'Needs my OK' };
+    const TIER_HELP = { denied: 'Hidden and blocked.', primary: 'In the prompt by default.', secondary: 'Hidden; the model turns it on with discover.', tertiary: 'Hidden; every use needs your approval.' };
+    const TIER_ORDER = ['denied', 'primary', 'secondary', 'tertiary'];
+
+    function Tiers({ value, onChange, small }) {
+      return h('span', { role: 'group', style: { display: 'inline-flex', border: line, borderRadius: 6, overflow: 'hidden', flex: 'none' } },
+        TIER_ORDER.map((t) => h('button', {
+          key: t, type: 'button', title: TIER_HELP[t], 'aria-pressed': value === t, onClick: () => onChange(t),
+          style: { padding: small ? '2px 8px' : '3px 10px', fontSize: 12, cursor: 'pointer', border: 'none', borderRight: t === 'tertiary' ? 'none' : line,
+            background: value === t ? (t === 'denied' ? bad : t === 'primary' ? good : '#3b6fd8') : 'none', color: value === t ? '#fff' : 'inherit' },
+        }, TIER_LABEL[t])));
+    }
+
+    // Everything installed, grouped by plugin / MCP server / skill provider, one tier control per item. Edits stay in
+    // this component until "Save"; nothing reaches the host before that.
+    function CapabilityTable({ onSaved }) {
+      const [inv, setInv] = React.useState(null);
+      const [states, setStates] = React.useState({});
+      const [preset, setPreset] = React.useState(null);
+      const [filter, setFilter] = React.useState('');
+      const [open, setOpen] = React.useState({});
+      const [busy, setBusy] = React.useState(false);
+      const [msg, setMsg] = React.useState(null);
+      const [dirty, setDirty] = React.useState(false);
+
+      const load = (id) => call('inventory', { preset: id }).then((v) => {
+        setInv(v); setPreset(v.preset); setStates(v.states); setDirty(false);
+      }).catch((e) => setMsg({ ok: false, text: e.message }));
+      React.useEffect(() => { load(null); }, []);
+
+      if (!inv) return h('p', { style: hint }, msg ? msg.text : 'Loading what is installed…');
+
+      const q = filter.trim().toLowerCase();
+      const matches = (i, g) => !q || `${i.label} ${i.description} ${g.label}`.toLowerCase().includes(q);
+      const set = (ids, tier) => { setStates((s) => ({ ...s, ...Object.fromEntries(ids.map((id) => [id, tier])) })); setDirty(true); };
+      const all = inv.groups.flatMap((g) => g.items);
+      const count = (tier) => all.filter((i) => states[i.id] === tier).length;
+      const inPrompt = all.filter((i) => states[i.id] === 'primary').reduce((n, i) => n + (i.tokens || 0), 0);
+      const everything = all.reduce((n, i) => n + (i.tokens || 0), 0);
+      const picked = inv.presets.find((p) => p.id === preset);
+
+      const save = async () => {
+        setBusy(true); setMsg(null);
+        try {
+          const v = await call('savematrix', { preset, states });
+          if (!v.ok) setMsg({ ok: false, text: `Not saved: ${v.errors?.[0]?.path ? `${v.errors[0].path}: ` : ''}${v.errors?.[0]?.message ?? 'invalid'}. The previous policy is still in force.` });
+          else { setMsg({ ok: true, text: `Saved. "${preset}" now follows this table (new sessions, and running ones that use it).` }); await load(preset); onSaved?.(); }
+        } catch (e) { setMsg({ ok: false, text: e.message }); }
+        setBusy(false);
+      };
+
+      return h('div', { style: { display: 'grid', gap: 12 } },
+        h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
+          h('label', { style: { fontSize: 13 } }, 'Agent preset '),
+          h('select', { style: input, value: preset, disabled: busy, onChange: (e) => { if (!dirty || window.confirm('Discard unsaved changes?')) load(e.target.value); } },
+            inv.presets.length ? inv.presets.map((p) => h('option', { key: p.id, value: p.id }, p.name === p.id ? p.id : `${p.name} (${p.id})`)) : h('option', { value: preset }, preset)),
+          h('input', { style: { ...input, flex: 1, minWidth: 160 }, value: filter, onChange: (e) => setFilter(e.target.value), placeholder: 'Search tools, skills, plugins, MCP servers', 'aria-label': 'search' })),
+        picked ? h('p', { style: hint }, picked.description || 'No description.', picked.plugins.length ? ` Plugins in this preset: ${picked.plugins.join(', ')}.` : '', picked.broken ? ` Broken: ${picked.broken}` : '') : null,
+        !inv.managed ? h('p', { style: hint }, `"${preset}" has no policy yet, so everything is allowed. Change anything below and save to start restricting it.`) : null,
+        h('p', { style: { margin: 0, fontSize: 13 } }, `${count('primary')} always on · ${count('secondary')} on request · ${count('tertiary')} need your OK · ${count('denied')} off. Tool schemas in the prompt: about ${inPrompt} tokens instead of ${everything}${everything ? ` (${Math.round((1 - inPrompt / everything) * 100)}% less)` : ''}. Estimate.`),
+
+        inv.groups.length ? inv.groups.map((g) => {
+          const shown = g.items.filter((i) => matches(i, g));
+          if (!shown.length) return null;
+          const ids = shown.map((i) => i.id);
+          const tiers = new Set(ids.map((id) => states[id]));
+          const isOpen = open[g.id] ?? Boolean(q);
+          return h('div', { key: g.id, style: card },
+            h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' } },
+              h('button', { type: 'button', style: { ...btn, border: 'none', padding: 0, textAlign: 'left' }, 'aria-expanded': isOpen, onClick: () => setOpen((o) => ({ ...o, [g.id]: !isOpen })) },
+                h('strong', { style: { fontSize: 14 } }, `${isOpen ? '▾' : '▸'} ${g.label}`), h('span', { style: hint }, `  ${g.detail} · ${shown.length} ${shown.length === 1 ? 'item' : 'items'}`)),
+              tiers.size === 1 ? h(Tiers, { value: [...tiers][0], onChange: (t) => set(ids, t), small: true })
+                : h('span', { style: { display: 'inline-flex', gap: 6, alignItems: 'center' } }, h('span', { style: hint }, 'mixed · set all:'), h(Tiers, { value: null, onChange: (t) => set(ids, t), small: true }))),
+            isOpen ? h('div', { style: { display: 'grid', gap: 4 } }, shown.map((i) => h('div', { key: i.id, style: { display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', padding: '4px 0', borderTop: line } },
+              h('span', { style: { minWidth: 0, flex: '1 1 260px' } }, h('span', { style: { fontSize: 13, fontWeight: 600 } }, i.label), i.tokens ? h('span', { style: hint }, `  ~${i.tokens} tokens`) : null, i.description ? h('span', { style: { ...hint, display: 'block' } }, i.description) : null),
+              h(Tiers, { value: states[i.id], onChange: (t) => set([i.id], t), small: true })))) : null);
+        }) : h('p', { style: hint }, 'Nothing is registered yet: no tools or skills were found in this profile.'),
+
+        (() => {
+          const bare = inv.plugins.filter((p) => !p.hasCapabilities);
+          return bare.length ? h('p', { style: hint }, `Other installed plugins (no tools or skills of their own): ${bare.map((p) => `${p.label}${p.enabled ? '' : ' (disabled)'}`).join(', ')}.`) : null;
+        })(),
+
+        h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+          h('button', { style: { ...btn, fontWeight: 600 }, disabled: busy || !dirty, onClick: save }, 'Save & apply'),
+          h('button', { style: btn, disabled: busy || !dirty, onClick: () => load(preset) }, 'Discard changes')),
+        msg ? h('p', { role: 'status', style: { margin: 0, fontSize: 13, color: msg.ok ? 'var(--dsw-alias-label-primary, inherit)' : bad } }, msg.text) : null);
     }
 
     function PresetManagerSection() {
@@ -118,10 +209,18 @@ window.__ModuleLoader__.load({
         : !data.valid ? ['The saved manifest is invalid; the previous policy is still in force.', bad]
         : data.active ? ['Active: presets are enforced on new and running agents.', good] : ['Saved but not active.', hint.color];
 
-      return h('div', { style: { display: 'grid', gap: 18, maxWidth: 760 } },
+      return h('div', { style: { display: 'grid', gap: 18, maxWidth: 900 } },
         h('h2', { style: { margin: 0, fontSize: 18 } }, 'Preset Manager'),
         h('p', { style: { ...hint, color: status[1] } }, status[0], data.strict ? ' Strict mode: agents without a binding are blocked.' : ''),
         h('p', { style: hint }, `Manifest file: ${data.file}`),
+        h('div', { style: { display: 'grid', gap: 8 } },
+          h('strong', { style: { fontSize: 15 } }, 'Capabilities per agent preset'),
+          h('p', { style: hint }, 'Pick an agent preset, then choose for every tool, MCP tool and skill: Off, Always on (in the prompt), On request (the model enables it with discover) or Needs my OK (you approve each use).'),
+          h(CapabilityTable, { onSaved: () => load(false) })),
+
+        h('details', { style: { display: 'grid', gap: 12 } },
+          h('summary', { style: { cursor: 'pointer', fontSize: 15, fontWeight: 600 } }, 'Advanced: manifest JSON, bindings, dry run, decisions'),
+          h('div', { style: { display: 'grid', gap: 18, marginTop: 12 } },
 
         h('div', { style: card },
           h('strong', { style: { fontSize: 14 } }, 'Agent bindings'),
@@ -166,7 +265,7 @@ window.__ModuleLoader__.load({
 
         h('div', { style: card },
           h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } }, h('strong', { style: { fontSize: 14 } }, 'Recent decisions'), h('button', { style: btn, disabled: busy, onClick: run(audit) }, 'Refresh')),
-          events.length ? h(Table, { head: ['Event', 'Capability', 'Rule'], rows: events.slice(0, 25).map((e) => [e.type, e.capability ?? '', [e.layer, e.rule].filter(Boolean).join(': ')]) }) : h('p', { style: hint }, 'Press Refresh. Arguments are never recorded.')));
+          events.length ? h(Table, { head: ['Event', 'Capability', 'Rule'], rows: events.slice(0, 25).map((e) => [e.type, e.capability ?? '', [e.layer, e.rule].filter(Boolean).join(': ')]) }) : h('p', { style: hint }, 'Press Refresh. Arguments are never recorded.')))));
     }
 
     return {

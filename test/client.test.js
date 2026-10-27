@@ -13,7 +13,7 @@ function makeReact() {
     if (!(i in inst.slots)) inst.slots[i] = typeof init === 'function' ? init() : init;
     return [inst.slots[i], (v) => { inst.slots[i] = typeof v === 'function' ? v(inst.slots[i]) : v; inst.render(); }];
   };
-  const useEffect = (fn) => { if (!cur.ran) cur.pending.push(fn); };
+  const useEffect = (fn) => { const inst = cur; const i = inst.idx++; if (!inst.slots[i]) { inst.slots[i] = true; inst.pending.push(fn); } }; // once per hook, also for components that mount later
   function expand(node) {
     if (node === null || node === undefined || node === false || node === true) return [];
     if (typeof node === 'string' || typeof node === 'number') return [String(node)];
@@ -22,7 +22,7 @@ function makeReact() {
     return [{ type: node.type, props: node.props, kids: node.children.flatMap(expand) }];
   }
   function mount(Comp) {
-    const inst = { slots: {}, idx: 0, pending: [], ran: false, tree: [], render() { cur = inst; inst.idx = 0; inst.tree = expand(Comp({})); cur = undefined; if (!inst.ran) { inst.ran = true; inst.pending.splice(0).forEach((f) => f()); } } };
+    const inst = { slots: {}, idx: 0, pending: [], ran: false, tree: [], render() { cur = inst; inst.idx = 0; inst.tree = expand(Comp({})); cur = undefined; inst.ran = true; inst.pending.splice(0).forEach((f) => f()); } };
     inst.render();
     return inst;
   }
@@ -137,7 +137,7 @@ test('changing a binding edits the editor text only; nothing is sent until Save'
   await settle();
   assert.equal(JSON.parse(editor(inst).props.value).agents.standard.preset, 'reviewer');
   assert.match(textOf(inst.tree), /Save to apply/);
-  assert.deepEqual(calls.map((c) => c.action), ['get']);
+  assert.deepEqual(calls.map((c) => c.action).filter((a) => a !== 'inventory'), ['get'], 'only reads; no save, validate or apply');
 });
 
 test('editing bindings with broken JSON in the editor refuses politely', async () => {
@@ -183,4 +183,59 @@ test('untrusted text (audit events, model-written names) is rendered as text, ne
   assert.ok(textOf(inst.tree).includes(hostile), 'shown literally');
   assert.deepEqual([...new Set(find(inst.tree, () => true).map((n) => n.type))].filter((t) => /img|script|iframe/.test(t)), []);
   assert.doesNotMatch(fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8'), /dangerouslySetInnerHTML|innerHTML|eval\(|new Function/);
+});
+
+const INV = {
+  preset: 'standard', managed: true, active: true,
+  presets: [{ id: 'standard', name: 'standard', description: 'Default preset', plugins: ['dsh-tool-fs'], broken: null }, { id: 'junior-dev', name: 'junior-dev', description: '', plugins: [], broken: null }],
+  plugins: [{ id: 'dsh-tool-fs', label: 'dsh-tool-fs', enabled: true, hasCapabilities: true }, { id: 'dsh-theme', label: 'dsh-theme', enabled: true, hasCapabilities: false }],
+  groups: [
+    { id: 'plugin:dsh-tool-fs', kind: 'plugin', label: 'dsh-tool-fs', detail: 'plugin', items: [{ id: 'tool:read', label: 'read', description: 'Read a file', tokens: 100 }, { id: 'tool:write', label: 'write', description: 'Write a file', tokens: 120 }] },
+    { id: 'mcp:github', kind: 'mcp', label: 'github', detail: 'MCP server', items: [{ id: 'mcp-tool:github/search', label: 'search', description: 'Search', tokens: 80 }] },
+    { id: 'skills:filesystem', kind: 'skills', label: 'filesystem', detail: 'skills', items: [{ id: 'skill:swift', label: 'swift', description: 'Swift help', tokens: 0 }] },
+  ],
+  states: { 'tool:read': 'primary', 'tool:write': 'denied', 'mcp-tool:github/search': 'secondary', 'skill:swift': 'primary' },
+};
+
+test('capability table lists presets, plugin and MCP groups and skills, and counts the tiers', async () => {
+  const { inst } = await boot({ get: () => DATA, inventory: () => INV });
+  const t = textOf(inst.tree);
+  assert.match(t, /Capabilities per agent preset/);
+  for (const w of ['dsh-tool-fs', 'github', 'filesystem', 'junior-dev', 'Plugins in this preset: dsh-tool-fs', 'dsh-theme']) assert.ok(t.includes(w), w);
+  assert.match(t, /2 always on · 1 on request · 0 need your OK · 1 off/);
+});
+
+test('changing a tier marks the table dirty, and Save sends every item with its tier', async () => {
+  const { inst, calls } = await boot({ get: () => DATA, inventory: () => INV, savematrix: () => ({ ok: true }) });
+  assert.ok(button(inst, 'Save & apply').props.disabled !== undefined);
+  const saveBefore = find(inst.tree, (n) => n.type === 'button' && textOf(n.kids) === 'Save & apply')[0];
+  assert.equal(saveBefore.props.disabled, true, 'nothing to save yet');
+  // the "dsh-tool-fs" group is mixed (primary + denied): click "Needs my OK" in its group control
+  const group = find(inst.tree, (n) => n.type === 'button' && textOf(n.kids).startsWith('▸ dsh-tool-fs'))[0];
+  group.props.onClick();
+  await settle();
+  const tertiary = find(inst.tree, (n) => n.type === 'button' && textOf(n.kids) === 'Needs my OK');
+  tertiary[0].props.onClick();
+  await settle();
+  const save = find(inst.tree, (n) => n.type === 'button' && textOf(n.kids) === 'Save & apply').find((b) => !b.props.disabled);
+  assert.ok(save, 'Save is enabled after a change');
+  save.props.onClick();
+  await settle();
+  const sent = calls.find((c) => c.action === 'savematrix').body;
+  assert.equal(sent.preset, 'standard');
+  assert.equal(sent.states['tool:read'], 'tertiary');
+  assert.equal(sent.states['tool:write'], 'tertiary');
+  assert.equal(sent.states['mcp-tool:github/search'], 'secondary', 'other groups are untouched');
+  assert.deepEqual(Object.keys(sent.states).sort(), Object.keys(INV.states).sort());
+});
+
+test('a rejected save shows the reason and says the old policy is still in force', async () => {
+  const { inst } = await boot({ get: () => DATA, inventory: () => INV, savematrix: () => ({ ok: false, errors: [{ path: 'presets.standard', message: 'bad' }] }) });
+  find(inst.tree, (n) => n.type === 'button' && textOf(n.kids).startsWith('▸ github'))[0].props.onClick();
+  await settle();
+  find(inst.tree, (n) => n.type === 'button' && textOf(n.kids) === 'Off')[0].props.onClick();
+  await settle();
+  find(inst.tree, (n) => n.type === 'button' && textOf(n.kids) === 'Save & apply').find((b) => !b.props.disabled).props.onClick();
+  await settle();
+  assert.match(textOf(inst.tree), /Not saved: presets\.standard: bad\. The previous policy is still in force/);
 });

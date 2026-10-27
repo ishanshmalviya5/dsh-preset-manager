@@ -22,6 +22,14 @@ an allowlist. Anything not listed in a preset is **denied**: hidden from the sch
 The manifest is `~/.dsh/preset-manager/presets.json` (`$DSH_HOME` overrides `~/.dsh`). Edit it in
 **Settings → Preset Manager**, or with the `dpm` CLI, or by hand; edits apply to running agents.
 
+The Settings page opens on a table. Pick an agent preset and it lists everything installed, grouped by plugin, MCP
+server and skill provider, with one control per tool, MCP tool and skill: **Off**, **Always on**, **On request**
+or **Needs my OK**. Saving rewrites that preset's tools, MCP and skills lists as explicit names and leaves its other
+sections and every other preset alone. The JSON editor, bindings, dry run and decision log are under **Advanced**.
+Skills come with their provider and MCP tools with their server. The tool registry doesn't record which plugin
+registered a tool, so built-in tools are matched to their DSH plugin from a table in `lib/inventory.js`. Tools from
+third-party plugins appear under "Other tools".
+
 ```json
 {
   "version": 1,
