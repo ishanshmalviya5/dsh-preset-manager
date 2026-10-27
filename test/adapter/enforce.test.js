@@ -240,3 +240,18 @@ test('re-attaching the same agent is idempotent (no stacked restrictions)', asyn
   enforcer.detach(agent);
   assert.deepEqual(w.names(agent), ['bash', 'fs_read']);
 });
+
+test('several own-scope tools at once do not make restrict() fail: everything hideable is still hidden', async () => {
+  const { w, audit, enforcer, agent } = await setup(CODER);
+  for (const n of ['fs_read', 'bash', 'browser']) w.reg(n);
+  w.reg('own_a', {}, agent.ctx);
+  w.reg('own_b', {}, agent.ctx);
+  enforcer.attach(agent);
+  assert.deepEqual(audit.events('apply-failed'), [], 'DSH names several unknown tools in one plural message; that must be understood');
+  const seen = w.names(agent);
+  assert.ok(!seen.includes('bash') && !seen.includes('browser'), `hidden: ${seen}`);
+  assert.ok(seen.includes('own_a') && seen.includes('own_b'), 'own-scope tools cannot be hidden');
+  assert.deepEqual(enforcer.metrics(agent).leaked.sort(), ['own_a', 'own_b']);
+  for (const n of ['own_a', 'own_b', 'bash']) assert.equal((await w.call(agent, n)).isError, true);
+  assert.deepEqual(w.ran, []);
+});
